@@ -1,10 +1,19 @@
 use bit_iter::BitIter;
-use std::{
-    fs::File,
-    io::{BufRead, BufReader},
-};
+use std::fmt::Display;
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
 
-type Word = [u8; 5];
+#[derive(Debug, Clone, Copy)]
+struct Word([u8; 5]);
+
+impl Display for Word {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = std::str::from_utf8(&self.0).unwrap();
+        s.fmt(f)
+    }
+}
+
 type Words = Vec<Word>;
 
 type Result<T> = std::result::Result<T, String>;
@@ -34,15 +43,14 @@ impl GuessState {
     fn update(&mut self, guessed: Word, gwr: GuessWordResult) {
         for i in 0..5 {
             match gwr[i] {
-                GuessLetterResult::Green => self.letter_choices[i] = 1 << (guessed[i] - b'a'),
-                GuessLetterResult::Grey => {
+                GuessLetterResult::Green => self.letter_choices[i] = 1 << (guessed.0[i] - b'a'),
+                GuessLetterResult::Grey =>
                     for j in 0..5 {
-                        self.letter_choices[j] &= !(1 << (guessed[i] - b'a'));
-                    }
-                }
+                        self.letter_choices[j] &= !(1 << (guessed.0[i] - b'a'));
+                    },
                 GuessLetterResult::Yellow => {
-                    self.letter_choices[i] &= !(1 << (guessed[i] - b'a'));
-                    self.must_appear |= 1 << (guessed[i] - b'a');
+                    self.letter_choices[i] &= !(1 << (guessed.0[i] - b'a'));
+                    self.must_appear |= 1 << (guessed.0[i] - b'a');
                 }
             }
         }
@@ -62,8 +70,8 @@ impl GuessState {
     }
 
     fn is_word_possible(&self, w: Word) -> bool {
-        w.iter().zip(self.letter_choices.iter()).all(|(&c, &p)| (p & (1 << (c - b'a'))) != 0)
-            && BitIter::from(self.must_appear).all(|c| w.iter().any(|&ch| ch == c as u8 + b'a'))
+        w.0.iter().zip(self.letter_choices.iter()).all(|(&c, &p)| (p & (1 << (c - b'a'))) != 0)
+            && BitIter::from(self.must_appear).all(|c| w.0.iter().any(|&ch| ch == c as u8 + b'a'))
     }
 }
 
@@ -83,7 +91,7 @@ fn load_words() -> Result<Words> {
         if !line_bytes.is_ascii() {
             return Err(format!("File contains word {:?} which is not an ASCII word", line));
         }
-        let mut word: Word = line_bytes.try_into().map_err(|_| {
+        let mut word: [u8; 5] = line_bytes.try_into().map_err(|_| {
             format!("File contains word {:?} which is not a five-letter word", line)
         })?;
         word.make_ascii_lowercase();
@@ -93,26 +101,21 @@ fn load_words() -> Result<Words> {
                 line
             ));
         }
-        rv.push(word);
+        rv.push(Word(word));
     }
     Ok(rv)
-}
-
-// TODO use the real Display trait
-fn display_word(w: Word) -> String {
-    String::from(std::str::from_utf8(&w).unwrap())
 }
 
 fn process_guess(guessed: Word, actual: Word) -> GuessWordResult {
     let mut set: u32 = 0;
     let mut rv: GuessWordResult = [GuessLetterResult::Grey; 5];
-    for c in actual {
+    for c in actual.0 {
         set |= 1 << (c - b'a');
     }
     for i in 0..5 {
-        rv[i] = if guessed[i] == actual[i] {
+        rv[i] = if guessed.0[i] == actual.0[i] {
             GuessLetterResult::Green
-        } else if (1 << (guessed[i] - b'a')) & set != 0 {
+        } else if (1 << (guessed.0[i] - b'a')) & set != 0 {
             GuessLetterResult::Yellow
         } else {
             GuessLetterResult::Grey
@@ -149,7 +152,7 @@ fn find_initial_guess(words: &Words) -> Word {
                 })
                 .sum::<f64>() as f64
                 / words.len() as f64;
-            println!("word = {} quality = {:.6}", display_word(guessed_word), rv);
+            println!("word = {} quality = {:.6}", guessed_word, rv);
             (rv * 1e6) as u64
         })
         .unwrap()
@@ -158,7 +161,7 @@ fn find_initial_guess(words: &Words) -> Word {
 fn real_main() -> Result<()> {
     let words = load_words()?;
     eprintln!("Loaded {} words", words.len());
-    eprintln!("Initial Guess: {}", display_word(find_initial_guess(&words)));
+    eprintln!("Initial Guess: {}", find_initial_guess(&words));
     Ok(())
 }
 
