@@ -1,0 +1,7 @@
+[package]
+name = "wordle_assistant"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bit-iter = "1.1.0"
