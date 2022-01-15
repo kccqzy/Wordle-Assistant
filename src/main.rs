@@ -30,14 +30,12 @@ impl TryFrom<&str> for Word {
     }
 }
 
-type Words = Vec<Word>;
-
 type Result<T> = std::result::Result<T, String>;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 enum GuessLetterResult {
-    Grey,
+    Wrong,
     Yellow,
     Green,
 }
@@ -76,7 +74,7 @@ impl GuessState {
         for i in 0..5 {
             match gwr[i] {
                 GuessLetterResult::Green => self.letter_choices[i] = 1 << (guessed.0[i] - b'a'),
-                GuessLetterResult::Grey =>
+                GuessLetterResult::Wrong =>
                     for j in 0..5 {
                         self.letter_choices[j] &= !(1 << (guessed.0[i] - b'a'));
                     },
@@ -111,9 +109,13 @@ impl GuessState {
         w.0.iter().zip(self.letter_choices.iter()).all(|(&c, &p)| (p & (1 << (c - b'a'))) != 0)
             && BitIter::from(self.must_appear).all(|c| w.0.iter().any(|&ch| ch == c as u8 + b'a'))
     }
+
+    fn filter_word_list<'a>(&self, words: &'a mut [Word]) -> &'a mut [Word] {
+        partition::partition(words, |&w| self.is_word_possible(w)).0
+    }
 }
 
-fn load_words() -> Result<Words> {
+fn load_words() -> Result<Vec<Word>> {
     let mut rv = vec![];
     let f = File::open("/Users/qzy/Desktop/Wordle/five_letter_words.txt")
         .map_err(|fe| format!("{:?}", fe))?;
@@ -136,7 +138,7 @@ fn load_words() -> Result<Words> {
 
 fn process_guess(guessed: Word, actual: Word) -> GuessWordResult {
     let mut set: u32 = 0;
-    let mut rv: GuessWordResult = [GuessLetterResult::Grey; 5];
+    let mut rv: GuessWordResult = [GuessLetterResult::Wrong; 5];
     for c in actual.0 {
         set |= 1 << (c - b'a');
     }
@@ -146,14 +148,14 @@ fn process_guess(guessed: Word, actual: Word) -> GuessWordResult {
         } else if (1 << (guessed.0[i] - b'a')) & set != 0 {
             GuessLetterResult::Yellow
         } else {
-            GuessLetterResult::Grey
+            GuessLetterResult::Wrong
         }
     }
     rv
 }
 
 // Returns the quality of a guess state. A high quality guess eliminates all but one word and has a quality of 1. A low quality guess eliminates nothing and has a quality of 0.
-fn quality(guess_state: &GuessState, words: &Words) -> f64 {
+fn quality(guess_state: &GuessState, words: &[Word]) -> f64 {
     let total = words.len() as f64;
     let remaining = words.iter().filter(|&&w| guess_state.is_word_possible(w)).count() as f64;
 
@@ -166,7 +168,7 @@ fn quality(guess_state: &GuessState, words: &Words) -> f64 {
     (total - remaining) / (total - 1.0)
 }
 
-fn guess_quality(s: &GuessState, guessed_word: Word, words: &Words) -> f64 {
+fn guess_quality(s: &GuessState, guessed_word: Word, words: &[Word]) -> f64 {
     words
         .iter()
         .map(|&actual_word| {
@@ -176,37 +178,50 @@ fn guess_quality(s: &GuessState, guessed_word: Word, words: &Words) -> f64 {
         / words.len() as f64
 }
 
-fn find_best_guess(s: &GuessState, words: &Words) -> Word {
-    // For each guessed word, we evaluate for each possible actual word, the guess quality.
-    let words = &words
-        .iter()
-        .filter(|&&actual_word| s.is_word_possible(actual_word))
-        .cloned()
-        .collect::<Words>();
-    *words
-        .iter()
-        .max_by_key(|&&guessed_word| {
-            let rv = guess_quality(s, guessed_word, words);
-            println!("word = {} quality = {:.6}", guessed_word, rv);
-            (rv * 1e6) as u64
-        })
-        .unwrap()
+fn find_best_guess(s: &GuessState, words: &[Word]) -> Word {
+    if words.len() == 1 {
+        words[0]
+    } else {
+        // For each guessed word, we evaluate for each possible actual word, the guess quality.
+        *words
+            .iter()
+            .max_by_key(|&&guessed_word| {
+                let rv = guess_quality(s, guessed_word, words);
+                println!("word = {} quality = {:.6}", guessed_word, rv);
+                (rv * 1e6) as u64
+            })
+            .unwrap()
+    }
 }
 
 fn real_main() -> Result<()> {
-    let words = load_words()?;
+    let mut words = load_words()?;
     eprintln!("Loaded {} words", words.len());
     // eprintln!("Initial Guess: {}", find_best_guess(&GuessState::default(), &words));
-    let example_trace: &[(Word, GuessWordResult)] = &[("RAISE".try_into().unwrap(), [
-        GuessLetterResult::Grey,
-        GuessLetterResult::Green,
-        GuessLetterResult::Grey,
-        GuessLetterResult::Grey,
-        GuessLetterResult::Grey,
-    ])];
-    let example_state = &GuessState::default().then(example_trace[0].0, example_trace[0].1);
-    eprintln!("State after first trial: {:?}", example_state);
-    eprintln!("First trial: {}", find_best_guess(&example_state, &words));
+    let example_trace: &[(Word, GuessWordResult)] = {
+        let w = GuessLetterResult::Wrong;
+        let y = GuessLetterResult::Yellow;
+        let g = GuessLetterResult::Green;
+        &[
+            ("RAISE".try_into().unwrap(), [w, g, w, w, w]),
+            ("BACON".try_into().unwrap(), [w, g, w, w, y]),
+            ("VAUNT".try_into().unwrap(), [w, g, w, y, y]),
+            ("TAWNY".try_into().unwrap(), [g, g, w, y, g]),
+        ]
+    };
+
+    let mut state = GuessState::default();
+    let mut words: &mut [Word] = &mut words;
+    for (i, &(guessed_word, result)) in example_trace.iter().enumerate() {
+        state.update(guessed_word, result);
+        eprintln!("State after round {}: {:?}", 1 + i, state);
+        words = state.filter_word_list(words);
+        eprintln!("{} word(s) remaining", words.len());
+        if words.is_empty() {
+            return Err("No more words remaining in word list".into());
+        }
+        eprintln!("Recommended Guess: {}", find_best_guess(&state, &words));
+    }
     Ok(())
 }
 
