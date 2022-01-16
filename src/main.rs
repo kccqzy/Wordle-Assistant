@@ -178,8 +178,14 @@ fn guess_quality(s: &GuessState, guessed_word: Word, words: &[Word]) -> f64 {
         / words.len() as f64
 }
 
-fn find_best_guess(s: &GuessState, words: &[Word]) -> Word {
-    if words.len() == 1 {
+fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
+    let all_words: &mut [Word] = std::mem::take(words);
+    let remaining_words = s.filter_word_list(all_words);
+    if remaining_words.is_empty() {
+        return Err("No more words remaining in word list".into());
+    }
+    *words = remaining_words;
+    Ok(if words.len() == 1 {
         words[0]
     } else {
         // For each guessed word, we evaluate for each possible actual word, the guess quality.
@@ -191,7 +197,7 @@ fn find_best_guess(s: &GuessState, words: &[Word]) -> Word {
                 (rv * 1e6) as u64
             })
             .unwrap()
-    }
+    })
 }
 
 fn real_main() -> Result<()> {
@@ -215,12 +221,7 @@ fn real_main() -> Result<()> {
     for (i, &(guessed_word, result)) in example_trace.iter().enumerate() {
         state.update(guessed_word, result);
         eprintln!("State after round {}: {:?}", 1 + i, state);
-        words = state.filter_word_list(words);
-        eprintln!("{} word(s) remaining", words.len());
-        if words.is_empty() {
-            return Err("No more words remaining in word list".into());
-        }
-        println!("Recommended Guess: {}", find_best_guess(&state, words));
+        println!("Recommended Guess: {}", find_best_guess(&state, &mut words)?);
     }
     Ok(())
 }
