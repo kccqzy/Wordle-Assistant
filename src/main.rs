@@ -71,8 +71,8 @@ impl std::fmt::Debug for GuessState {
 
 impl GuessState {
     fn update(&mut self, guessed: Word, gwr: GuessWordResult) {
-        for i in 0..5 {
-            match gwr[i] {
+        for (i, letter_result) in gwr.iter().enumerate() {
+            match letter_result {
                 GuessLetterResult::Green => self.letter_choices[i] = 1 << (guessed.0[i] - b'a'),
                 GuessLetterResult::Wrong =>
                     for j in 0..5 {
@@ -142,8 +142,8 @@ fn process_guess(guessed: Word, actual: Word) -> GuessWordResult {
     for c in actual.0 {
         set |= 1 << (c - b'a');
     }
-    for i in 0..5 {
-        rv[i] = if guessed.0[i] == actual.0[i] {
+    for (i, result) in rv.iter_mut().enumerate() {
+        *result = if guessed.0[i] == actual.0[i] {
             GuessLetterResult::Green
         } else if (1 << (guessed.0[i] - b'a')) & set != 0 {
             GuessLetterResult::Yellow
@@ -187,7 +187,7 @@ fn find_best_guess(s: &GuessState, words: &[Word]) -> Word {
             .iter()
             .max_by_key(|&&guessed_word| {
                 let rv = guess_quality(s, guessed_word, words);
-                println!("word = {} quality = {:.6}", guessed_word, rv);
+                eprintln!("word = {} quality = {:.6}", guessed_word, rv);
                 (rv * 1e6) as u64
             })
             .unwrap()
@@ -220,7 +220,7 @@ fn real_main() -> Result<()> {
         if words.is_empty() {
             return Err("No more words remaining in word list".into());
         }
-        eprintln!("Recommended Guess: {}", find_best_guess(&state, &words));
+        println!("Recommended Guess: {}", find_best_guess(&state, words));
     }
     Ok(())
 }
