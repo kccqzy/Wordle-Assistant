@@ -206,25 +206,43 @@ fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
 fn real_main() -> Result<()> {
     let mut words = load_words()?;
     eprintln!("Loaded {} words", words.len());
-    // eprintln!("Initial Guess: {}", find_best_guess(&GuessState::default(), &words));
-    let example_trace: &[(Word, GuessWordResult)] = {
+    // eprintln!("Initial Guess: {}", {let mut words: &mut [Word] = &mut words; find_best_guess(&GuessState::default(), &mut words)}?);
+    let traces: &[Vec<(Word, GuessWordResult)>] = {
         let w = GuessLetterResult::Wrong;
         let y = GuessLetterResult::Yellow;
         let g = GuessLetterResult::Green;
         &[
-            ("RAISE".try_into().unwrap(), [w, g, w, w, w]),
-            ("BACON".try_into().unwrap(), [w, g, w, w, y]),
-            ("VAUNT".try_into().unwrap(), [w, g, w, y, y]),
-            ("TAWNY".try_into().unwrap(), [g, g, w, y, g]),
+            vec![
+                ("RAISE".try_into().unwrap(), [w, g, w, w, w]),
+                ("BACON".try_into().unwrap(), [w, g, w, w, y]),
+                ("VAUNT".try_into().unwrap(), [w, g, w, y, y]),
+                ("TAWNY".try_into().unwrap(), [g, g, w, y, g]),
+            ],
+            vec![
+                ("rates".try_into().unwrap(), [w, g, w, w, w]),
+                ("manly".try_into().unwrap(), [w, g, g, w, w]),
+                ("danio".try_into().unwrap(), [w, g, g, g, w]),
+            ],
+            vec![
+                ("tares".try_into().unwrap(), [w, y, y, w, y]),
+                ("snark".try_into().unwrap(), [g, w, y, y, w]),
+            ],
+            vec![
+                ("tares".try_into().unwrap(), [w, w, y, y, y]),
+                ("prose".try_into().unwrap(), [w, y, w, y, g]),
+            ],
         ]
     };
 
-    let mut state = GuessState::default();
-    let mut words: &mut [Word] = &mut words;
-    for (i, &(guessed_word, result)) in example_trace.iter().enumerate() {
-        state.update(guessed_word, result);
-        eprintln!("State after round {}: {:?}", 1 + i, state);
-        println!("Recommended Guess: {}", find_best_guess(&state, &mut words)?);
+    for trace in traces.iter() {
+        let mut state = GuessState::default();
+        let mut words: &mut [Word] = &mut words;
+        for (i, &(guessed_word, result)) in trace.iter().enumerate() {
+            state.update(guessed_word, result);
+            eprintln!("State after round {}: {:?}", 1 + i, state);
+            println!("Recommended Guess: {}", find_best_guess(&state, &mut words)?);
+            println!("Remaining words: {}", words.len());
+        }
     }
     Ok(())
 }
