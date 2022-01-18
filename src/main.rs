@@ -181,6 +181,28 @@ fn guess_quality(s: &GuessState, guessed_word: Word, words: &[Word]) -> f64 {
         / words.len() as f64
 }
 
+fn guess_quality_lower_bound(
+    s: &GuessState, guessed_word: Word, words: &[Word], lower_bound: f64,
+) -> Option<f64> {
+    let total = words.len() as f64;
+    let minimum_quality = lower_bound * total;
+    words
+        .iter()
+        .enumerate()
+        .try_fold(0.0f64, |cur_quality, (i, &actual_word)| {
+            let this_quality =
+                quality(&s.then(guessed_word, process_guess(guessed_word, actual_word)), words);
+            let new_quality = cur_quality + this_quality;
+            if new_quality + ((words.len() - i - 1) as f64) < minimum_quality {
+                eprintln!("word = {} early reject after {}", guessed_word, i);
+                None
+            } else {
+                Some(new_quality)
+            }
+        })
+        .map(|q| q / total)
+}
+
 fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
     let all_words: &mut [Word] = std::mem::take(words);
     let remaining_words = s.filter_word_list(all_words);
@@ -191,14 +213,20 @@ fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
     Ok(if words.len() == 1 {
         words[0]
     } else {
-        // For each guessed word, we evaluate for each possible actual word, the guess quality.
-        *words
+        let mut best_quality: f64 = 0.0;
+        // We use a filter_map with a mutable closure here. The filter_map essentially yields an increasing subsequence.
+        words
             .iter()
-            .max_by_key(|&&guessed_word| {
-                let rv = guess_quality(s, guessed_word, words);
-                eprintln!("word = {} quality = {:.6}", guessed_word, rv);
-                (rv * 1e6) as u64
+            .filter_map(|&guessed_word| {
+                guess_quality_lower_bound(s, guessed_word, words, best_quality).map(
+                    |better_quality| {
+                        eprintln!("word = {} quality = {:.6}", guessed_word, better_quality);
+                        best_quality = better_quality;
+                        guessed_word
+                    },
+                )
             })
+            .last()
             .unwrap()
     })
 }
@@ -206,7 +234,10 @@ fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
 fn real_main() -> Result<()> {
     let mut words = load_words()?;
     eprintln!("Loaded {} words", words.len());
-    // eprintln!("Initial Guess: {}", {let mut words: &mut [Word] = &mut words; find_best_guess(&GuessState::default(), &mut words)}?);
+    eprintln!("Initial Guess: {}", {
+        let mut words: &mut [Word] = &mut words;
+        find_best_guess(&GuessState::default(), &mut words)
+    }?);
     let traces: &[Vec<(Word, GuessWordResult)>] = {
         let w = GuessLetterResult::Wrong;
         let y = GuessLetterResult::Yellow;
