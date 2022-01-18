@@ -73,7 +73,10 @@ impl GuessState {
     fn update(&mut self, guessed: Word, gwr: GuessWordResult) {
         for (i, letter_result) in gwr.iter().enumerate() {
             match letter_result {
-                GuessLetterResult::Green => self.letter_choices[i] = 1 << (guessed.0[i] - b'a'),
+                GuessLetterResult::Green => {
+                    self.letter_choices[i] = 1 << (guessed.0[i] - b'a');
+                    self.must_appear &= !1 << (guessed.0[i] - b'a');
+                }
                 GuessLetterResult::Wrong =>
                     for j in 0..5 {
                         self.letter_choices[j] &= !(1 << (guessed.0[i] - b'a'));
