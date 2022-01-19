@@ -231,8 +231,24 @@ fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
     })
 }
 
+fn presort_words_by_heuristic(words: &mut [Word]) {
+    let mut histogram = [[0isize; 26]; 5];
+    for w in words.iter() {
+        for (i, letter) in w.0.iter().enumerate() {
+            histogram[i][(letter - b'a') as usize] += 1;
+        }
+    }
+    words.sort_unstable_by_key(|w| {
+        -w.0.iter()
+            .enumerate()
+            .map(|(i, letter)| histogram[i][(letter - b'a') as usize])
+            .sum::<isize>()
+    });
+}
+
 fn real_main() -> Result<()> {
     let mut words = load_words()?;
+    presort_words_by_heuristic(&mut words);
     eprintln!("Loaded {} words", words.len());
     eprintln!("Initial Guess: {}", {
         let mut words: &mut [Word] = &mut words;
