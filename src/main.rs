@@ -1,4 +1,6 @@
+use arrayvec::ArrayVec;
 use bit_iter::BitIter;
+use std::cmp::Ordering;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufRead;
@@ -33,24 +35,34 @@ impl TryFrom<&str> for Word {
 type Result<T> = std::result::Result<T, String>;
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GuessLetterResult {
-    Wrong,
-    Yellow,
     Green,
+    Yellow,
+    Black,
 }
 
 type GuessWordResult = [GuessLetterResult; 5];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LetterCount(std::ops::Range<u8>); // We purposefully use a half-open range. It makes the below code simpler.
+
+impl Default for LetterCount {
+    fn default() -> Self {
+        // By default, we have no information about how many letters there are. So the range is [0, 6).
+        LetterCount(0u8..6)
+    }
+}
+
 #[derive(Clone)]
 struct GuessState {
     letter_choices: [u32; 5],
-    must_appear: u32,
+    letter_counts: [LetterCount; 26],
 }
 
 impl Default for GuessState {
     fn default() -> Self {
-        GuessState { letter_choices: [(1 << 26) - 1; 5], must_appear: 0 }
+        GuessState { letter_choices: [(1 << 26) - 1; 5], letter_counts: Default::default() }
     }
 }
 
@@ -59,45 +71,84 @@ impl std::fmt::Debug for GuessState {
         fn set_to_str(s: u32) -> String {
             BitIter::from(s).map(|c| (c as u8 + b'a') as char).collect()
         }
+
+        struct LetterCountsFormatter<'a>(&'a [LetterCount; 26]);
+
+        impl<'a> std::fmt::Debug for LetterCountsFormatter<'a> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_map()
+                    .entries(
+                        self.0
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, lc)| **lc != LetterCount::default())
+                            .map(|(i, lc)| ((i as u8 + b'a') as char, lc)),
+                    )
+                    .finish()
+            }
+        }
+
         f.debug_struct("GuessState")
             .field(
                 "letter_choices",
                 &self.letter_choices.iter().copied().map(set_to_str).collect::<Vec<String>>(),
             )
-            .field("must_appear", &set_to_str(self.must_appear))
+            .field("letter_counts", &LetterCountsFormatter(&self.letter_counts))
             .finish()
     }
 }
 
 impl GuessState {
     fn update(&mut self, guessed: Word, gwr: GuessWordResult) {
-        for (i, letter_result) in gwr.iter().enumerate() {
-            match letter_result {
-                GuessLetterResult::Green => {
-                    self.letter_choices[i] = 1 << (guessed.0[i] - b'a');
-                    self.must_appear &= !1 << (guessed.0[i] - b'a');
-                }
-                GuessLetterResult::Wrong =>
-                    for j in 0..5 {
-                        self.letter_choices[j] &= !(1 << (guessed.0[i] - b'a'));
-                    },
-                GuessLetterResult::Yellow => {
-                    self.letter_choices[i] &= !(1 << (guessed.0[i] - b'a'));
-                    self.must_appear |= 1 << (guessed.0[i] - b'a');
+        // The interpretation of letter_result is surprisingly tricky when it
+        // comes to words with repeated letters. We essentially have to process
+        // Greens, then Yellows, then Blacks, and in that order. We cannot
+        // combine them, because for example we can have a Black followed by
+        // Green for a single letter.
+
+        let mut letter_count = [0u8; 26];
+
+        for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Green) {
+            let letter = (guessed.0[i] - b'a') as usize;
+            letter_count[letter] += 1;
+            self.letter_choices[i] = 1 << letter;
+            self.letter_counts[letter].0.start = letter_count[letter];
+            assert!(!self.letter_counts[letter].0.is_empty(), "state is {:?}", self);
+        }
+        for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Yellow) {
+            let letter = (guessed.0[i] - b'a') as usize;
+            letter_count[letter] += 1;
+            self.letter_choices[i] &= !(1 << letter);
+            self.letter_counts[letter].0.start = letter_count[letter];
+            assert!(!self.letter_counts[letter].0.is_empty(), "state is {:?}", self);
+        }
+        for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Black) {
+            let letter = (guessed.0[i] - b'a') as usize;
+            letter_count[letter] += 1;
+            self.letter_choices[i] &= !(1 << letter);
+            self.letter_counts[letter].0.end = letter_count[letter];
+            assert!(!self.letter_counts[letter].0.is_empty(), "state is {:?}", self);
+        }
+
+        // Now try to combine the information from the two fields.
+        for letter in guessed.0.iter() {
+            let letter = (letter - b'a') as usize;
+            // Pass 1: remove if LetterCount(0..1)
+            if self.letter_counts[letter] == LetterCount(0..1) {
+                for set in self.letter_choices.iter_mut() {
+                    *set &= !(1 << letter)
                 }
             }
-        }
-        for c in BitIter::from(self.must_appear) {
-            if let Some((0, (i, _))) = self
-                .letter_choices
-                .iter()
-                .enumerate()
-                .filter(|(_, &ch)| (ch & (1 << c)) > 0)
-                .enumerate()
-                .last()
+            // Pass 2: if a single count
+            else if self.letter_counts[letter].0.end - self.letter_counts[letter].0.start == 1
+                && self.letter_choices.iter().filter(|&lc| lc & (1 << letter) != 0).count()
+                    == self.letter_counts[letter].0.start as usize
             {
-                self.letter_choices[i] = 1 << c;
-                self.must_appear &= !(1 << c);
+                for set in self.letter_choices.iter_mut() {
+                    if *set & (1 << letter) != 0 {
+                        *set = 1 << letter
+                    }
+                }
             }
         }
     }
@@ -110,7 +161,10 @@ impl GuessState {
 
     fn is_word_possible(&self, w: Word) -> bool {
         w.0.iter().zip(self.letter_choices.iter()).all(|(&c, &p)| (p & (1 << (c - b'a'))) != 0)
-            && BitIter::from(self.must_appear).all(|c| w.0.iter().any(|&ch| ch == c as u8 + b'a'))
+            && self.letter_counts.iter().enumerate().all(|(i, lc)| {
+                *lc == LetterCount::default()
+                    || lc.0.contains(&(w.0.iter().filter(|&c| (c - b'a') == i as u8).count() as u8))
+            })
     }
 
     fn filter_word_list<'a>(&self, words: &'a mut [Word]) -> &'a mut [Word] {
@@ -140,21 +194,60 @@ fn load_words() -> Result<Vec<Word>> {
 }
 
 fn process_guess(guessed: Word, actual: Word) -> GuessWordResult {
-    let mut set: u32 = 0;
-    let mut rv: GuessWordResult = [GuessLetterResult::Wrong; 5];
-    for c in actual.0 {
-        set |= 1 << (c - b'a');
-    }
+    let mut rv: GuessWordResult = [GuessLetterResult::Black; 5];
+    let mut remaining_guess = ArrayVec::<_, 5>::new();
+    let mut remaining_actual = ArrayVec::<_, 5>::new();
+    // Step 1: Green.
     for (i, result) in rv.iter_mut().enumerate() {
-        *result = if guessed.0[i] == actual.0[i] {
-            GuessLetterResult::Green
-        } else if (1 << (guessed.0[i] - b'a')) & set != 0 {
-            GuessLetterResult::Yellow
+        if guessed.0[i] == actual.0[i] {
+            *result = GuessLetterResult::Green;
         } else {
-            GuessLetterResult::Wrong
+            remaining_guess.push((guessed.0[i], i));
+            remaining_actual.push(actual.0[i]);
+        }
+    }
+    // Step 2: Yellow. We need to look at the remaining letters after the
+    // yellows. If the intersection is not empty, we assign them yellows.
+    remaining_guess.sort_unstable();
+    remaining_actual.sort_unstable();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < remaining_guess.len() && j < remaining_actual.len() {
+        match remaining_guess[i].0.cmp(&remaining_actual[j]) {
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+            Ordering::Equal => {
+                rv[remaining_guess[i].1] = GuessLetterResult::Yellow;
+                i += 1;
+                j += 1;
+            }
         }
     }
     rv
+}
+
+#[test]
+fn test_process_guess() {
+    let b = GuessLetterResult::Black;
+    let y = GuessLetterResult::Yellow;
+    let g = GuessLetterResult::Green;
+    assert_eq!(process_guess("abcde".try_into().unwrap(), "fghij".try_into().unwrap()), [
+        b, b, b, b, b
+    ]);
+    assert_eq!(process_guess("aaaaa".try_into().unwrap(), "abcde".try_into().unwrap()), [
+        g, b, b, b, b
+    ]);
+    assert_eq!(process_guess("baaaa".try_into().unwrap(), "abcde".try_into().unwrap()), [
+        y, y, b, b, b
+    ]);
+    assert_eq!(process_guess("brood".try_into().unwrap(), "proxy".try_into().unwrap()), [
+        b, g, g, b, b
+    ]);
+    assert_eq!(process_guess("dippy".try_into().unwrap(), "proxy".try_into().unwrap()), [
+        b, b, y, b, g
+    ]);
+    assert_eq!(process_guess("yucky".try_into().unwrap(), "proxy".try_into().unwrap()), [
+        b, b, b, b, g
+    ]);
 }
 
 // Returns the quality of a guess state. A high quality guess eliminates all but one word and has a quality of 1. A low quality guess eliminates nothing and has a quality of 0.
@@ -175,7 +268,9 @@ fn guess_quality(s: &GuessState, guessed_word: Word, words: &[Word]) -> f64 {
     words
         .iter()
         .map(|&actual_word| {
-            quality(&s.then(guessed_word, process_guess(guessed_word, actual_word)), words)
+            let new_state = s.then(guessed_word, process_guess(guessed_word, actual_word));
+            assert!(new_state.is_word_possible(actual_word));
+            quality(&new_state, words)
         })
         .sum::<f64>()
         / words.len() as f64
@@ -190,8 +285,9 @@ fn guess_quality_lower_bound(
         .iter()
         .enumerate()
         .try_fold(0.0f64, |cur_quality, (i, &actual_word)| {
-            let this_quality =
-                quality(&s.then(guessed_word, process_guess(guessed_word, actual_word)), words);
+            let new_state = s.then(guessed_word, process_guess(guessed_word, actual_word));
+            assert!(new_state.is_word_possible(actual_word), "original state = {:?}\nguessed_word = {}\nactual_word = {}\nguess result= {:?}\nnew state = {:?}", s, guessed_word, actual_word, process_guess(guessed_word, actual_word), new_state);
+            let this_quality = quality(&new_state, words);
             let new_quality = cur_quality + this_quality;
             if new_quality + ((words.len() - i - 1) as f64) < minimum_quality {
                 eprintln!("word = {} early reject after {}", guessed_word, i);
@@ -255,28 +351,33 @@ fn real_main() -> Result<()> {
         find_best_guess(&GuessState::default(), &mut words)
     }?);
     let traces: &[Vec<(Word, GuessWordResult)>] = {
-        let w = GuessLetterResult::Wrong;
+        let b = GuessLetterResult::Black;
         let y = GuessLetterResult::Yellow;
         let g = GuessLetterResult::Green;
         &[
             vec![
-                ("RAISE".try_into().unwrap(), [w, g, w, w, w]),
-                ("BACON".try_into().unwrap(), [w, g, w, w, y]),
-                ("VAUNT".try_into().unwrap(), [w, g, w, y, y]),
-                ("TAWNY".try_into().unwrap(), [g, g, w, y, g]),
+                ("RAISE".try_into().unwrap(), [b, g, b, b, b]),
+                ("BACON".try_into().unwrap(), [b, g, b, b, y]),
+                ("VAUNT".try_into().unwrap(), [b, g, b, y, y]),
+                ("TAWNY".try_into().unwrap(), [g, g, b, y, g]),
             ],
             vec![
-                ("rates".try_into().unwrap(), [w, g, w, w, w]),
-                ("manly".try_into().unwrap(), [w, g, g, w, w]),
-                ("danio".try_into().unwrap(), [w, g, g, g, w]),
+                ("rates".try_into().unwrap(), [b, g, b, b, b]),
+                ("manly".try_into().unwrap(), [b, g, g, b, b]),
+                ("danio".try_into().unwrap(), [b, g, g, g, b]),
             ],
             vec![
-                ("tares".try_into().unwrap(), [w, y, y, w, y]),
-                ("snark".try_into().unwrap(), [g, w, y, y, w]),
+                ("tares".try_into().unwrap(), [b, y, y, b, y]),
+                ("snark".try_into().unwrap(), [g, b, y, y, b]),
             ],
             vec![
-                ("tares".try_into().unwrap(), [w, w, y, y, y]),
-                ("prose".try_into().unwrap(), [w, y, w, y, g]),
+                ("tares".try_into().unwrap(), [b, b, y, y, y]),
+                ("prose".try_into().unwrap(), [b, y, b, y, g]),
+            ],
+            vec![
+                ("saner".try_into().unwrap(), [b, b, b, b, y]),
+                ("court".try_into().unwrap(), [b, y, b, y, b]),
+                ("brood".try_into().unwrap(), [b, g, g, b, b]),
             ],
         ]
     };
