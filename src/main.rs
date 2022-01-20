@@ -391,6 +391,10 @@ fn real_main() -> Result<()> {
                 ("court".try_into().unwrap(), [b, y, b, y, b]),
                 ("brood".try_into().unwrap(), [b, g, g, b, b]),
             ],
+            vec![
+                ("sales".try_into().unwrap(), [b, b, b, b, b]),
+                ("count".try_into().unwrap(), [b, g, b, g, g]),
+            ],
         ]
     };
 
