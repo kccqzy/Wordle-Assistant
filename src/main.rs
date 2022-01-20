@@ -113,36 +113,48 @@ impl GuessState {
             letter_count[letter] += 1;
             self.letter_choices[i] = 1 << letter;
             self.letter_counts[letter].0.start = letter_count[letter];
-            assert!(!self.letter_counts[letter].0.is_empty(), "state is {:?}", self);
         }
         for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Yellow) {
             let letter = (guessed.0[i] - b'a') as usize;
             letter_count[letter] += 1;
             self.letter_choices[i] &= !(1 << letter);
             self.letter_counts[letter].0.start = letter_count[letter];
-            assert!(!self.letter_counts[letter].0.is_empty(), "state is {:?}", self);
         }
         for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Black) {
             let letter = (guessed.0[i] - b'a') as usize;
             letter_count[letter] += 1;
             self.letter_choices[i] &= !(1 << letter);
-            self.letter_counts[letter].0.end = letter_count[letter];
-            assert!(!self.letter_counts[letter].0.is_empty(), "state is {:?}", self);
+            self.letter_counts[letter].0.end =
+                u8::min(self.letter_counts[letter].0.end, letter_count[letter]);
         }
 
         // Now try to combine the information from the two fields.
         for letter in guessed.0.iter() {
             let letter = (letter - b'a') as usize;
+            let current_letter_count = &mut self.letter_counts[letter];
+
+            let implied_letter_count =
+                (self.letter_choices.iter().filter(|set| **set == 1 << letter).count() as u8)
+                    ..(self.letter_choices.iter().filter(|set| *set & (1 << letter) != 0).count()
+                        as u8
+                        + 1);
+            current_letter_count.0.start =
+                u8::max(current_letter_count.0.start, implied_letter_count.start);
+            current_letter_count.0.end =
+                u8::min(current_letter_count.0.end, implied_letter_count.end);
+
+            assert!(!current_letter_count.0.is_empty(), "Current letter_count must not be empty but it is. State: {:?}", self);
+
             // Pass 1: remove if LetterCount(0..1)
-            if self.letter_counts[letter] == LetterCount(0..1) {
+            if current_letter_count == &LetterCount(0..1) {
                 for set in self.letter_choices.iter_mut() {
                     *set &= !(1 << letter)
                 }
             }
             // Pass 2: if a single count
-            else if self.letter_counts[letter].0.end - self.letter_counts[letter].0.start == 1
+            else if current_letter_count.0.end - current_letter_count.0.start == 1
                 && self.letter_choices.iter().filter(|&lc| lc & (1 << letter) != 0).count()
-                    == self.letter_counts[letter].0.start as usize
+                    == current_letter_count.0.start as usize
             {
                 for set in self.letter_choices.iter_mut() {
                     if *set & (1 << letter) != 0 {
