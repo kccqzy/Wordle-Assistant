@@ -143,7 +143,11 @@ impl GuessState {
             current_letter_count.0.end =
                 u8::min(current_letter_count.0.end, implied_letter_count.end);
 
-            assert!(!current_letter_count.0.is_empty(), "Current letter_count must not be empty but it is. State: {:?}", self);
+            assert!(
+                !current_letter_count.0.is_empty(),
+                "Current letter_count must not be empty but it is. State: {:?}",
+                self
+            );
 
             // Pass 1: remove if LetterCount(0..1)
             if current_letter_count == &LetterCount(0..1) {
@@ -303,12 +307,20 @@ fn guess_quality_lower_bound(
             let new_quality = cur_quality + this_quality;
             if new_quality + ((words.len() - i - 1) as f64) < minimum_quality {
                 eprintln!("word = {} early reject after {}", guessed_word, i);
+                debug_assert!(guess_quality(s, guessed_word, words) < minimum_quality);
                 None
             } else {
                 Some(new_quality)
             }
         })
-        .map(|q| q / total)
+        .map(|raw_quality| {
+            let rv = raw_quality / total;
+            // This uses == on double values. It is safe because in both
+            // implementations we use the same sequence of operations to arrive
+            // at the result.
+            debug_assert_eq!(guess_quality(s, guessed_word, words) , rv);
+            rv
+        })
 }
 
 fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
@@ -394,6 +406,10 @@ fn real_main() -> Result<()> {
             vec![
                 ("sales".try_into().unwrap(), [b, b, b, b, b]),
                 ("count".try_into().unwrap(), [b, g, b, g, g]),
+            ],
+            vec![
+                ("raise".try_into().unwrap(), [g, b, b, b, b]),
+                ("rotor".try_into().unwrap(), [g, g, y, g, b]),
             ],
         ]
     };
