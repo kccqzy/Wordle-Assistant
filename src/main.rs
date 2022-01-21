@@ -101,36 +101,44 @@ impl std::fmt::Debug for GuessState {
 impl GuessState {
     fn update(&mut self, guessed: Word, gwr: GuessWordResult) {
         // The interpretation of letter_result is surprisingly tricky when it
-        // comes to words with repeated letters. We essentially have to process
-        // Greens, then Yellows, then Blacks, and in that order. We cannot
-        // combine them, because for example we can have a Black followed by
-        // Green for a single letter.
+        // comes to words with repeated letters. It is possible for a repeated
+        // letter to first get a Black and then a Green in the same guess. This
+        // means the Green was right, and the Black indicated that there are no
+        // more positions with this letter. It's also possible for a repeated
+        // letter to get a Black and Yellow.
 
-        let mut letter_count = [0u8; 26];
+        let mut letters_seen = 0u32;
+        for (i, glr) in gwr.iter().enumerate() {
+            let letter = (guessed.0[i] - b'a') as usize;
 
-        for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Green) {
-            let letter = (guessed.0[i] - b'a') as usize;
-            letter_count[letter] += 1;
-            self.letter_choices[i] = 1 << letter;
-            self.letter_counts[letter].0.start = letter_count[letter];
-        }
-        for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Yellow) {
-            let letter = (guessed.0[i] - b'a') as usize;
-            letter_count[letter] += 1;
-            self.letter_choices[i] &= !(1 << letter);
-            self.letter_counts[letter].0.start = letter_count[letter];
-        }
-        for (i, _) in gwr.iter().enumerate().filter(|(_, r)| **r == GuessLetterResult::Black) {
-            let letter = (guessed.0[i] - b'a') as usize;
-            letter_count[letter] += 1;
-            self.letter_choices[i] &= !(1 << letter);
-            self.letter_counts[letter].0.end =
-                u8::min(self.letter_counts[letter].0.end, letter_count[letter]);
+            // First, process the letter_choices state. This is straightforward: for
+            // Green, we eliminate all other choices; for Yellow and Black, we
+            // eliminate itself.
+            match glr {
+                GuessLetterResult::Green => self.letter_choices[i] = 1 << letter,
+                _ => self.letter_choices[i] &= !(1 << letter),
+            }
+
+            // Next, process the letter_counts. If a letter gets Green and Yellow,
+            // the lower bound of the count must be the number of times this letter
+            // occurs here with Green and Yellow. For Black, the upper bound of the
+            // count must be the one more than the number of Green and Yellow.
+            let yellow_or_green_count = guessed
+                .0
+                .iter()
+                .zip(gwr.iter())
+                .filter(|(&c, &l)| (c - b'a') as usize == letter && l != GuessLetterResult::Black)
+                .count() as u8;
+            match glr {
+                GuessLetterResult::Black =>
+                    self.letter_counts[letter].0.end = 1 + yellow_or_green_count,
+                _ => self.letter_counts[letter].0.start = yellow_or_green_count,
+            }
+            letters_seen |= 1 << letter;
         }
 
         // Now try to combine the information from the two fields.
-        for letter in guessed.0.iter() {
-            let letter = (letter - b'a') as usize;
+        for letter in BitIter::from(letters_seen) {
             let current_letter_count = &mut self.letter_counts[letter];
 
             let implied_letter_count =
