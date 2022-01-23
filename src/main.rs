@@ -419,6 +419,19 @@ fn real_main() -> Result<()> {
                 ("raise".try_into().unwrap(), [g, b, b, b, b]),
                 ("rotor".try_into().unwrap(), [g, g, y, g, b]),
             ],
+            vec![
+                ("raise".try_into().unwrap(), [y, b, g, b, b]),
+                ("print".try_into().unwrap(), [g, g, g, b, b]),
+                ("prior".try_into().unwrap(), [g, g, g, b, b]),
+            ],
+            vec![
+                ("raise".try_into().unwrap(), [y, b, g, b, b]),
+                ("print".try_into().unwrap(), [y, g, g, b, b]),
+            ],
+            vec![
+                ("lares".try_into().unwrap(), [y, b, b, b, b]),
+                ("could".try_into().unwrap(), [b, y, b, g, b]),
+            ],
         ]
     };
 
