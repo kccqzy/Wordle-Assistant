@@ -6,4 +6,3 @@ edition = "2021"
 [dependencies]
 bit-iter = "1.1.0"
 partition = "0.1.2"
-arrayvec = "0.7.2"

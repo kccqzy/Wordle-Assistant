@@ -1,4 +1,3 @@
-use arrayvec::ArrayVec;
 use bit_iter::BitIter;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -220,23 +219,30 @@ fn load_words() -> Result<Vec<Word>> {
 
 fn process_guess(guessed: Word, actual: Word) -> GuessWordResult {
     let mut rv: GuessWordResult = [GuessLetterResult::Black; 5];
-    let mut remaining_guess = ArrayVec::<_, 5>::new();
-    let mut remaining_actual = ArrayVec::<_, 5>::new();
+    let mut remaining_guess = [(0u8, 0usize); 5];
+    let mut remaining_actual = [0u8; 5];
+
+    let mut incorrect_count = 0usize;
+
     // Step 1: Green.
     for (i, result) in rv.iter_mut().enumerate() {
         if guessed.0[i] == actual.0[i] {
             *result = GuessLetterResult::Green;
         } else {
-            remaining_guess.push((guessed.0[i], i));
-            remaining_actual.push(actual.0[i]);
+            remaining_guess[incorrect_count] = (guessed.0[i], i);
+            remaining_actual[incorrect_count] = actual.0[i];
+            incorrect_count += 1;
         }
     }
+
     // Step 2: Yellow. We need to look at the remaining letters after the
     // yellows. If the intersection is not empty, we assign them yellows.
+    let remaining_guess = &mut remaining_guess[..incorrect_count];
+    let remaining_actual = &mut remaining_actual[..incorrect_count];
     remaining_guess.sort_unstable();
     remaining_actual.sort_unstable();
     let (mut i, mut j) = (0usize, 0usize);
-    while i < remaining_guess.len() && j < remaining_actual.len() {
+    while i < incorrect_count && j < incorrect_count {
         match remaining_guess[i].0.cmp(&remaining_actual[j]) {
             Ordering::Less => i += 1,
             Ordering::Greater => j += 1,
