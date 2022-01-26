@@ -354,30 +354,33 @@ fn guess_quality_lower_bound(
 fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
     let all_words: &mut [Word] = std::mem::take(words);
     let remaining_words = s.filter_word_list(all_words);
-    if remaining_words.is_empty() {
-        return Err("No more words remaining in word list".into());
-    }
     *words = remaining_words;
-    Ok(if words.len() == 1 {
-        words[0]
-    } else {
-        let mut best_quality: f64 = 0.0;
-        // We use a filter_map with a mutable closure here. The filter_map
-        // essentially yields an increasing subsequence.
-        words
-            .iter()
-            .filter_map(|&guessed_word| {
-                guess_quality_lower_bound(s, guessed_word, words, best_quality).map(
-                    |better_quality| {
-                        eprintln!("word = {} quality = {:.6}", guessed_word, better_quality);
-                        best_quality = better_quality;
-                        guessed_word
-                    },
-                )
-            })
-            .last()
-            .unwrap()
-    })
+    match words.len() {
+        0 => Err("No more words remaining in word list".into()),
+        1 => Ok(words[0]),
+        2 => Ok({
+            eprintln!("Only 2 words left: {} {}", words[0], words[1]);
+            words[1]
+        }),
+        _ => Ok({
+            let mut best_quality: f64 = 0.0;
+            // We use a filter_map with a mutable closure here. The filter_map
+            // essentially yields an increasing subsequence.
+            words
+                .iter()
+                .filter_map(|&guessed_word| {
+                    guess_quality_lower_bound(s, guessed_word, words, best_quality).map(
+                        |better_quality| {
+                            eprintln!("word = {} quality = {:.6}", guessed_word, better_quality);
+                            best_quality = better_quality;
+                            guessed_word
+                        },
+                    )
+                })
+                .last()
+                .unwrap()
+        }),
+    }
 }
 
 fn real_main() -> Result<()> {
