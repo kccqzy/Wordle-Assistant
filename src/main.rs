@@ -437,6 +437,10 @@ fn real_main() -> Result<()> {
                 ("lares".try_into().unwrap(), [y, b, b, b, b]),
                 ("could".try_into().unwrap(), [b, y, b, g, b]),
             ],
+            vec![
+                ("lares".try_into().unwrap(), [b, y, y, b, y]),
+                ("stark".try_into().unwrap(), [g, b, y, y, b]),
+            ],
         ]
     };
 
