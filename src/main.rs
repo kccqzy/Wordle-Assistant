@@ -1,6 +1,7 @@
 use arrayvec::ArrayVec;
 use bit_iter::BitIter;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufRead;
@@ -35,7 +36,7 @@ impl TryFrom<&str> for Word {
 type Result<T> = std::result::Result<T, String>;
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum GuessLetterResult {
     Green,
     Yellow,
@@ -289,12 +290,25 @@ fn quality(guess_state: &GuessState, words: &[Word]) -> f64 {
 }
 
 fn guess_quality(s: &GuessState, guessed_word: Word, words: &[Word]) -> f64 {
+    let mut partitioned_words = HashMap::<GuessWordResult, usize>::new();
+    for actual_word in words.iter() {
+        *partitioned_words.entry(process_guess(guessed_word, *actual_word)).or_default() += 1;
+    }
+
+    let total = words.len() as f64;
     words
         .iter()
         .map(|&actual_word| {
-            let new_state = s.then(guessed_word, process_guess(guessed_word, actual_word));
-            assert!(new_state.is_word_possible(actual_word));
-            quality(&new_state, words)
+            let guess_result = process_guess(guessed_word, actual_word);
+            let remaining = *partitioned_words.get(&guess_result).unwrap() as f64;
+            let this_quality = (total - remaining) / (total - 1.0);
+
+            debug_assert!(s.then(guessed_word, guess_result).is_word_possible(actual_word));
+            // This uses == on double values. It is safe because in both
+            // implementations we use the same sequence of operations to arrive
+            // at the result.
+            debug_assert_eq!(this_quality, quality(&s.then(guessed_word, guess_result), words));
+            this_quality
         })
         .sum::<f64>()
         / words.len() as f64
@@ -303,15 +317,21 @@ fn guess_quality(s: &GuessState, guessed_word: Word, words: &[Word]) -> f64 {
 fn guess_quality_lower_bound(
     s: &GuessState, guessed_word: Word, words: &[Word], lower_bound: f64,
 ) -> Option<f64> {
+    let mut partitioned_words = HashMap::<GuessWordResult, usize>::new();
+    for actual_word in words.iter() {
+        *partitioned_words.entry(process_guess(guessed_word, *actual_word)).or_default() += 1;
+    }
+
     let total = words.len() as f64;
     let minimum_quality = lower_bound * total;
     words
         .iter()
         .enumerate()
         .try_fold(0.0f64, |cur_quality, (i, &actual_word)| {
-            let new_state = s.then(guessed_word, process_guess(guessed_word, actual_word));
-            assert!(new_state.is_word_possible(actual_word), "original state = {:?}\nguessed_word = {}\nactual_word = {}\nguess result= {:?}\nnew state = {:?}", s, guessed_word, actual_word, process_guess(guessed_word, actual_word), new_state);
-            let this_quality = quality(&new_state, words);
+            let guess_result = process_guess(guessed_word, actual_word);
+            let remaining = *partitioned_words.get(&guess_result).unwrap() as f64;
+            let this_quality = (total - remaining) / (total - 1.0);
+
             let new_quality = cur_quality + this_quality;
             if new_quality + ((words.len() - i - 1) as f64) < minimum_quality {
                 eprintln!("word = {} early reject after {}", guessed_word, i);
@@ -326,7 +346,7 @@ fn guess_quality_lower_bound(
             // This uses == on double values. It is safe because in both
             // implementations we use the same sequence of operations to arrive
             // at the result.
-            debug_assert_eq!(guess_quality(s, guessed_word, words) , rv);
+            debug_assert_eq!(guess_quality(s, guessed_word, words), rv);
             rv
         })
 }
@@ -342,7 +362,8 @@ fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
         words[0]
     } else {
         let mut best_quality: f64 = 0.0;
-        // We use a filter_map with a mutable closure here. The filter_map essentially yields an increasing subsequence.
+        // We use a filter_map with a mutable closure here. The filter_map
+        // essentially yields an increasing subsequence.
         words
             .iter()
             .filter_map(|&guessed_word| {
@@ -359,24 +380,8 @@ fn find_best_guess(s: &GuessState, words: &mut &mut [Word]) -> Result<Word> {
     })
 }
 
-fn presort_words_by_heuristic(words: &mut [Word]) {
-    let mut histogram = [[0isize; 26]; 5];
-    for w in words.iter() {
-        for (i, letter) in w.0.iter().enumerate() {
-            histogram[i][(letter - b'a') as usize] += 1;
-        }
-    }
-    words.sort_unstable_by_key(|w| {
-        -w.0.iter()
-            .enumerate()
-            .map(|(i, letter)| histogram[i][(letter - b'a') as usize])
-            .sum::<isize>()
-    });
-}
-
 fn real_main() -> Result<()> {
     let mut words = load_words()?;
-    presort_words_by_heuristic(&mut words);
     eprintln!("Loaded {} words", words.len());
     eprintln!("Initial Guess: {}", {
         let mut words: &mut [Word] = &mut words;
