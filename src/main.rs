@@ -450,6 +450,10 @@ fn real_main() -> Result<()> {
                 ("lares".try_into().unwrap(), [b, y, y, b, y]),
                 ("stark".try_into().unwrap(), [g, b, y, y, b]),
             ],
+            vec![
+                ("arise".try_into().unwrap(), [y, b, b, b, b]),
+                ("canal".try_into().unwrap(), [y, y, b, b, b]),
+            ],
         ]
     };
 
